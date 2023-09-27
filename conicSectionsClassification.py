@@ -1,91 +1,119 @@
+import os
 import pandas as pd
 import numpy as np
-import os
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.utils import compute_class_weight
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.metrics import confusion_matrix
+from autogluon.tabular import TabularPredictor
+
+
+SYNTHETIC_DATASET_SIZE = 50123
 
 
 def generate_data():
     np.random.seed(222)
-    DATASET_SIZE = 50123
-
-    coefficients = np.random.uniform(-1, 1, size=(DATASET_SIZE, 6))
-    # Let's add some zero values in order to get fewer ellipses and hyperbolas.
-    mask = np.random.randint(0, 6, size = coefficients.shape).astype(np.bool)
+    
+    coefficients = np.random.uniform(-1, 1, size=(SYNTHETIC_DATASET_SIZE, 6))
+    # Let's add some zero values in order to obtain fewer ellipses and hyperbolas.
+    mask = np.random.randint(0, 6, size=coefficients.shape).astype(np.bool_)
     mask = np.invert(mask)
     zeros_matrix = np.zeros(coefficients.shape)
     coefficients[mask] = zeros_matrix[mask]
-    dataset = pd.DataFrame(coefficients, columns=list('ABCDEF'))
-    
-    # Let's filter out degenerate conic sections using matrix representation of conic sections.
-    dataset['determinant'] = dataset.eval('A*C*F + B*E*D*.25 - D*D*C*.25 - B*B*F*.25 - E*E*A*.25')
-    #dataset = dataset.loc[dataset.determinant != 0, :]
-    dataset.drop(dataset[dataset.determinant == 0].index, inplace = True)
-    print(dataset.shape)
-    
-    dataset['discriminant'] = dataset.B ** 2 - 4 * dataset.A * dataset.C
-    dataset['conicSection'] = np.select(
-        [
-            dataset.discriminant < 0,
-            dataset.discriminant > 0
-        ],
-        [
-            'Ellipse',
-            'Hyperbola'
-        ], default = 'Parabola')
-    print(dataset.conicSection.value_counts())
-    
-    # Let's try to forget about the analytical solution. Later we are going to use standard ML technics.
-    dataset.drop(columns = ['discriminant', 'determinant'], inplace = True)
-    
-    X = dataset.drop(columns = 'conicSection')
-    y = dataset.conicSection
-    
-    return(train_test_split(X, y, test_size = 0.2, random_state = 222))    
+    dataset = pd.DataFrame(coefficients, columns=list("ABCDEF"))
 
-def make_predictions(x_train, x_test, y_train, y_test):
-    poly = PolynomialFeatures(interaction_only = False,include_bias = False)
+    # Let's filter out degenerate conic sections using matrix representation of conic sections.
+    dataset["determinant"] = dataset.eval(
+        "A*C*F + B*E*D*.25 - D*D*C*.25 - B*B*F*.25 - E*E*A*.25"
+    )
+    # dataset = dataset.loc[dataset.determinant != 0, :]
+    dataset.drop(dataset[dataset.determinant == 0].index, inplace=True)
+    print(dataset.shape)
+
+    dataset["discriminant"] = dataset.B**2 - 4 * dataset.A * dataset.C
+    dataset["conicSection"] = np.select(
+        [dataset.discriminant < 0, dataset.discriminant > 0],
+        ["Ellipse", "Hyperbola"],
+        default="Parabola",
+    )
+    print(dataset.conicSection.value_counts())
+
+    # Let's forget about the analytical solution. Later we are going to use ML technics.
+    dataset.drop(columns=["discriminant", "determinant"], inplace=True)
+
+    x = dataset.drop(columns="conicSection")
+    y = dataset.conicSection
+
+    return train_test_split(x, y, test_size=0.2, random_state=222)
+
+def make_predictions_classic_approach(x_train, x_test, y_train, y_test):
+    poly = PolynomialFeatures(interaction_only=False, include_bias=False)
     x_train = poly.fit_transform(x_train)
-    
+
     # Let's target class imbalance problem.
-    class_weights = compute_class_weight('balanced', np.unique(y_train), y_train)
-    class_weights_dict = {np.unique(y_train)[i]: w for i, w in enumerate(class_weights)}
+    class_weights = compute_class_weight(
+        class_weight="balanced", classes=np.unique(y_train), y=y_train
+    )
+    class_weights_dict = {
+        np.unique(y_train)[i]: w for i, w in enumerate(class_weights)}
     print(class_weights_dict)
-    
-    clf = LogisticRegression(penalty = 'l2', random_state = 222, solver = 'newton-cg', C = 999999,
-                            class_weight = class_weights_dict,
-                            multi_class = 'multinomial').fit(x_train, y_train)
- 
-    IDs = x_test.index
+
+    clf = LogisticRegression(
+        penalty="l2",
+        random_state=222,
+        solver="newton-cg",
+        C=999999,
+        class_weight=class_weights_dict,
+        multi_class="multinomial",
+    )
+    clf.fit(x_train, y_train)
+
     x_test = poly.fit_transform(x_test)
     y_pred = clf.predict(x_test)
-    print('Accuracy of logistic regression classifier on test set: {:.2f}'.format(clf.score(x_test, y_test)))
-    confusion_matrix_ = confusion_matrix(y_test, y_pred)
-    print('Confusion matrix:')
-    print(confusion_matrix_)
     
-    testres = pd.DataFrame(np.column_stack([IDs.values, y_pred]))
-    testres.columns = ['ID', 'conicSection']
-    return(testres)
+    print(
+        f"Accuracy of logistic regression classifier on test set: {round(clf.score(x_test, y_test), 4)}"
+    )
+
+    return y_pred
+
+def make_predictions_automl_approach(x_train, x_test, y_train, y_test):
+    train_data = x_train.join(y_train)
+    clf = TabularPredictor(label="conicSection")
+    clf.fit(
+        train_data=train_data
+        #, ag_args_fit={'num_gpus': 1} # start docker with GPU
+    )
+
+    test_data = x_test.join(y_test)
+    clf.leaderboard(test_data)
+    y_pred = clf.predict(test_data)
+    print(
+        f'Accuracy of autoML classifier on test set: {round(clf.evaluate_predictions(y_test, y_pred)["accuracy"], 4)}'
+    )
+
+    return y_pred
 
 def main():
     print(os.getcwd())
-    print(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    
+
     x_train, x_test, y_train, y_test = generate_data()
-    
-    train = pd.concat([x_train, y_train], axis = 1)
-    train.to_csv("train.csv", index = False)
+
+    train = pd.concat([x_train, y_train], axis=1)
+    train.to_csv("train.csv", index=False)
     x_test.to_csv("test.csv")
-    print(os.listdir(os.curdir))    
 
-    y_pred = make_predictions(x_train, x_test, y_train, y_test)
-    y_pred.to_csv("testres.txt", index = False)
-    
-if __name__ == '__main__':
+    #y_pred = make_predictions_classic_approach(x_train, x_test, y_train, y_test)
+    y_pred = make_predictions_automl_approach(x_train, x_test, y_train, y_test)
+
+    print("Confusion matrix:")
+    print(confusion_matrix(y_test, y_pred))
+
+    test_results = pd.DataFrame(np.column_stack([x_test.index.values, y_pred]))
+    test_results.columns = ["ID", "conicSection"]
+    test_results.to_csv("test_results.txt", index=False)
+
+if __name__ == "__main__":
     main()
-
