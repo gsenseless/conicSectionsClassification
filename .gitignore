@@ -106,3 +106,5 @@ venv.bak/
 test.csv
 train.csv
 testres.txt
+test_results.txt
+AutogluonModels/
