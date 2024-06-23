@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+import click
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.utils import compute_class_weight
@@ -9,10 +10,10 @@ from sklearn.metrics import confusion_matrix
 from autogluon.tabular import TabularPredictor
 
 
-SYNTHETIC_DATASET_SIZE = 50123
+SYNTHETIC_DATASET_SIZE: int = 50123
 
 
-def generate_data():
+def generate_data() -> tuple:
     np.random.seed(222)
     
     coefficients = np.random.uniform(-1, 1, size=(SYNTHETIC_DATASET_SIZE, 6))
@@ -47,7 +48,9 @@ def generate_data():
 
     return train_test_split(x, y, test_size=0.2, random_state=222)
 
-def make_predictions_classic_approach(x_train, x_test, y_train, y_test):
+def make_predictions_classic_approach(
+    x_train: pd.DataFrame, x_test: pd.DataFrame, y_train: pd.Series, y_test: pd.Series
+) -> np.ndarray:
     poly = PolynomialFeatures(interaction_only=False, include_bias=False)
     x_train = poly.fit_transform(x_train)
 
@@ -78,7 +81,9 @@ def make_predictions_classic_approach(x_train, x_test, y_train, y_test):
 
     return y_pred
 
-def make_predictions_automl_approach(x_train, x_test, y_train, y_test):
+def make_predictions_automl_approach(
+    x_train: pd.DataFrame, x_test: pd.DataFrame, y_train: pd.Series, y_test: pd.Series
+) -> pd.Series:
     train_data = x_train.join(y_train)
     clf = TabularPredictor(label="conicSection")
     clf.fit(
@@ -95,22 +100,29 @@ def make_predictions_automl_approach(x_train, x_test, y_train, y_test):
 
     return y_pred
 
-def main():
-    print(os.getcwd())
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
+@click.command()
+@click.option('--approach', type=click.Choice(['classic', 'automl']), default='classic', help='Choose the prediction approach.')    
+def main(approach: str):
+    print("Generating data...")
     x_train, x_test, y_train, y_test = generate_data()
 
+    print("Saving training and test data to CSV files...")
     train = pd.concat([x_train, y_train], axis=1)
     train.to_csv("train.csv", index=False)
     x_test.to_csv("test.csv")
 
-    #y_pred = make_predictions_classic_approach(x_train, x_test, y_train, y_test)
-    y_pred = make_predictions_automl_approach(x_train, x_test, y_train, y_test)
-
+    
+    if approach == 'classic':
+        print("Making predictions using classic approach...")
+        y_pred = make_predictions_classic_approach(x_train, x_test, y_train, y_test)
+    elif approach == 'automl':
+        print("Making predictions using AutoML approach...")
+        y_pred = make_predictions_automl_approach(x_train, x_test, y_train, y_test)
+        
     print("Confusion matrix:")
     print(confusion_matrix(y_test, y_pred))
 
+    print("Saving test results to file...")
     test_results = pd.DataFrame(np.column_stack([x_test.index.values, y_pred]))
     test_results.columns = ["ID", "conicSection"]
     test_results.to_csv("test_results.txt", index=False)

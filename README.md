@@ -1,4 +1,4 @@
-The script generates data for multiclassification problem and then predicts outcomes. 
+The script generates data for multiclassification problem and then predicts classes. 
 
 Steps for data generation:
 - generate random coefficients according to a uniform distribution from -1 to 1 for 50123 conical sections.
